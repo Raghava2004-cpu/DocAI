@@ -1,0 +1,23 @@
+# Environment variables - NEVER commit this
+.env
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+
+# Uploaded files (user data, can be large)
+uploads/
+
+# FAISS index if saved to disk
+*.index
+
+# OS
+.DS_Store
+Thumbs.db
