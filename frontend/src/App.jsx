@@ -1,10 +1,14 @@
-import { useState, useRef } from "react"
+import { useState, useRef, useEffect } from "react"
 
-const API = import.meta.env.VITE_API_URL || "http://localhost:8000"
+const API = import.meta.env.VITE_API_URL?.replace(/\/$/, "") || ""
+
+if (!API) {
+  console.warn("⚠️ VITE_API_URL is not set. Requests will fail. Set it in your deployment environment.")
+}
 
 function App() {
-  const [session, setSession] = useState(null)        // {session_id, type, filename}
-  const [tab, setTab] = useState("chat")              // chat | quiz | summary
+  const [session, setSession] = useState(null)
+  const [tab, setTab] = useState("chat")
   const [messages, setMessages] = useState([])
   const [input, setInput] = useState("")
   const [loading, setLoading] = useState(false)
@@ -15,14 +19,30 @@ function App() {
   const [quizConfig, setQuizConfig] = useState({ num: 5, difficulty: "medium" })
   const [uploading, setUploading] = useState(false)
   const [dragOver, setDragOver] = useState(false)
+  const [error, setError] = useState("")
   const fileRef = useRef()
+  const messagesEndRef = useRef()
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" })
+  }, [messages, loading])
 
   async function handleFile(file) {
     if (!file) return
+    setError("")
+
+    // Validate file type
+    const ext = file.name.split(".").pop().toLowerCase()
+    if (!["pdf", "xlsx", "xls", "csv"].includes(ext)) {
+      setError("Only PDF, XLSX, XLS, and CSV files are supported.")
+      return
+    }
+
     setUploading(true)
     setSession(null); setMessages([]); setSummary(""); setQuiz([]); setAnswers({}); setSubmitted(false)
     const form = new FormData()
     form.append("file", file)
+
     try {
       const res = await fetch(`${API}/upload`, { method: "POST", body: form })
       const data = await res.json()
@@ -31,7 +51,11 @@ function App() {
       setMessages([{ role: "assistant", text: `✅ **${data.filename}** uploaded! Ask me anything about it.` }])
       setTab("chat")
     } catch (e) {
-      alert(e.message)
+      if (e.message === "Failed to fetch") {
+        setError("Cannot reach the server. Make sure VITE_API_URL is set to your Hugging Face backend URL.")
+      } else {
+        setError(e.message)
+      }
     } finally {
       setUploading(false)
     }
@@ -50,9 +74,10 @@ function App() {
         body: JSON.stringify({ session_id: session.session_id, question: q })
       })
       const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || "Request failed")
       setMessages(m => [...m, { role: "assistant", text: data.answer }])
-    } catch {
-      setMessages(m => [...m, { role: "assistant", text: "Error contacting server." }])
+    } catch (e) {
+      setMessages(m => [...m, { role: "assistant", text: `⚠️ Error: ${e.message}` }])
     } finally {
       setLoading(false)
     }
@@ -68,9 +93,12 @@ function App() {
         body: JSON.stringify({ session_id: session.session_id })
       })
       const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || "Request failed")
       setSummary(data.summary)
-    } catch { setSummary("Error fetching summary.") }
-    finally { setLoading(false) }
+    } catch (e) {
+      setSummary(`⚠️ Error: ${e.message}`)
+    } finally {
+      setLoading(false) }
   }
 
   async function fetchQuiz() {
@@ -83,9 +111,13 @@ function App() {
         body: JSON.stringify({ session_id: session.session_id, num_questions: quizConfig.num, difficulty: quizConfig.difficulty })
       })
       const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || "Request failed")
       setQuiz(data.questions || [])
-    } catch { alert("Error generating quiz.") }
-    finally { setLoading(false) }
+    } catch (e) {
+      setError(`Quiz error: ${e.message}`)
+    } finally {
+      setLoading(false)
+    }
   }
 
   const norm = (s) => (s || "").trim().toLowerCase()
@@ -97,6 +129,14 @@ function App() {
       {/* Sidebar */}
       <div style={s.sidebar}>
         <div style={s.logo}>📄 DocAI</div>
+
+        {/* Error banner */}
+        {error && (
+          <div style={s.errorBanner}>
+            ⚠️ {error}
+            <button style={s.errorClose} onClick={() => setError("")}>✕</button>
+          </div>
+        )}
 
         {/* Upload zone */}
         <div
@@ -144,6 +184,12 @@ function App() {
             <div style={{ fontSize: 56 }}>📂</div>
             <h2 style={{ margin: "12px 0 6px", fontWeight: 600 }}>Upload a file to get started</h2>
             <p style={{ color: "#888", fontSize: 14 }}>Supports PDF, Excel (.xlsx/.xls), and CSV files</p>
+            {!API && (
+              <div style={s.warnBox}>
+                ⚠️ <strong>VITE_API_URL</strong> is not configured.<br />
+                Set it to your Hugging Face backend URL before deploying.
+              </div>
+            )}
           </div>
         )}
 
@@ -157,7 +203,13 @@ function App() {
                   <p style={{ margin: 0, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{m.text}</p>
                 </div>
               ))}
-              {loading && <div style={{ ...s.bubble, ...s.bubbleBot }}><span style={s.bubbleRole}>AI</span><p style={{ margin: 0, color: "#999" }}>Thinking…</p></div>}
+              {loading && (
+                <div style={{ ...s.bubble, ...s.bubbleBot }}>
+                  <span style={s.bubbleRole}>AI</span>
+                  <p style={{ margin: 0, color: "#999" }}>Thinking…</p>
+                </div>
+              )}
+              <div ref={messagesEndRef} />
             </div>
             <div style={s.inputRow}>
               <input style={s.input} value={input} placeholder="Ask a question about your file…"
@@ -191,7 +243,6 @@ function App() {
               <h2 style={s.panelTitle}>Quiz Generator</h2>
             </div>
 
-            {/* Config */}
             {!quiz.length && (
               <div style={s.quizConfig}>
                 <label style={s.label}>Questions
@@ -210,42 +261,41 @@ function App() {
               </div>
             )}
 
-            {/* Questions */}
             {quiz.length > 0 && (
               <div>
                 {quiz.map((q, qi) => {
-                  // Normalize comparison: trim + lowercase to avoid whitespace/case bugs
                   const normalize = (s) => (s || "").trim().toLowerCase()
                   const correctNorm = normalize(q.answer)
                   const selectedNorm = normalize(answers[qi])
                   const isAnsweredCorrectly = selectedNorm === correctNorm
 
                   return (
-                  <div key={qi} style={s.questionCard}>
-                    <p style={s.questionText}>{qi + 1}. {q.question}</p>
-                    <div style={s.options}>
-                      {q.options.map((opt, oi) => {
-                        const optNorm = normalize(opt)
-                        const isSelected = normalize(answers[qi]) === optNorm
-                        const isCorrect = submitted && optNorm === correctNorm
-                        const isWrong = submitted && isSelected && optNorm !== correctNorm
-                        return (
-                          <button key={oi} disabled={submitted}
-                            style={{ ...s.option, ...(isCorrect ? s.optCorrect : {}), ...(isWrong ? s.optWrong : {}), ...(isSelected && !submitted ? s.optSelected : {}) }}
-                            onClick={() => !submitted && setAnswers(a => ({ ...a, [qi]: opt }))}>
-                            {opt}
-                          </button>
-                        )
-                      })}
-                    </div>
-                    {submitted && (
-                      <div style={s.explanation}>
-                        <strong>{isAnsweredCorrectly ? "✅ Correct!" : `❌ Correct answer: ${q.answer}`}</strong>
-                        <p style={{ margin: "4px 0 0", fontSize: 13, color: "#555" }}>{q.explanation}</p>
+                    <div key={qi} style={s.questionCard}>
+                      <p style={s.questionText}>{qi + 1}. {q.question}</p>
+                      <div style={s.options}>
+                        {q.options.map((opt, oi) => {
+                          const optNorm = normalize(opt)
+                          const isSelected = normalize(answers[qi]) === optNorm
+                          const isCorrect = submitted && optNorm === correctNorm
+                          const isWrong = submitted && isSelected && optNorm !== correctNorm
+                          return (
+                            <button key={oi} disabled={submitted}
+                              style={{ ...s.option, ...(isCorrect ? s.optCorrect : {}), ...(isWrong ? s.optWrong : {}), ...(isSelected && !submitted ? s.optSelected : {}) }}
+                              onClick={() => !submitted && setAnswers(a => ({ ...a, [qi]: opt }))}>
+                              {opt}
+                            </button>
+                          )
+                        })}
                       </div>
-                    )}
-                  </div>
-                )})}
+                      {submitted && (
+                        <div style={s.explanation}>
+                          <strong>{isAnsweredCorrectly ? "✅ Correct!" : `❌ Correct answer: ${q.answer}`}</strong>
+                          <p style={{ margin: "4px 0 0", fontSize: 13, color: "#555" }}>{q.explanation}</p>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
 
                 {!submitted
                   ? <button style={s.primaryBtn} onClick={() => setSubmitted(true)}
@@ -271,8 +321,10 @@ function App() {
 
 const styles = {
   root: { display: "flex", height: "100vh", fontFamily: "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif", background: "#fafbfc" },
-  sidebar: { width: 260, background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)", color: "#e2e8f0", display: "flex", flexDirection: "column", padding: 24, gap: 20, flexShrink: 0, boxShadow: "2px 0 12px rgba(0,0,0,0.1)" },
+  sidebar: { width: 260, background: "linear-gradient(135deg, #0f172a 0%, #1e293b 100%)", color: "#e2e8f0", display: "flex", flexDirection: "column", padding: 24, gap: 20, flexShrink: 0, boxShadow: "2px 0 12px rgba(0,0,0,0.1)", overflowY: "auto" },
   logo: { fontSize: 24, fontWeight: 800, background: "linear-gradient(135deg, #06b6d4 0%, #3b82f6 100%)", WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent", padding: "8px 0 16px", letterSpacing: "-0.5px" },
+  errorBanner: { background: "#fef2f2", border: "1px solid #fecaca", color: "#b91c1c", borderRadius: 10, padding: "10px 14px", fontSize: 12, lineHeight: 1.5, display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8 },
+  errorClose: { background: "none", border: "none", color: "#b91c1c", cursor: "pointer", fontSize: 14, padding: 0, flexShrink: 0 },
   dropzone: { border: "2px dashed #475569", borderRadius: 14, padding: "28px 16px", textAlign: "center", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 8, transition: "all 0.3s ease", background: "rgba(100,116,139,0.05)" },
   dropzoneActive: { borderColor: "#06b6d4", background: "rgba(6,182,212,0.1)", transform: "scale(1.02)" },
   uploadHint: { fontSize: 13, color: "#cbd5e1", fontWeight: 500 },
@@ -281,8 +333,9 @@ const styles = {
   navBtn: { background: "none", border: "none", color: "#94a3b8", padding: "12px 14px", borderRadius: 10, textAlign: "left", cursor: "pointer", fontSize: 15, fontWeight: 500, transition: "all 0.2s ease" },
   navBtnActive: { background: "linear-gradient(135deg, rgba(6,182,212,0.2) 0%, rgba(59,130,246,0.2) 100%)", color: "#06b6d4", fontWeight: 600, borderLeft: "3px solid #06b6d4", paddingLeft: 11 },
   main: { flex: 1, overflow: "hidden", display: "flex", flexDirection: "column", background: "#fafbfc" },
-  empty: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#64748b" },
-  chatWrap: { flex: 1, display: "flex", flexDirection: "column", height: "100%" },
+  empty: { flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", color: "#64748b", padding: 32, textAlign: "center" },
+  warnBox: { marginTop: 24, background: "#fffbeb", border: "1px solid #fcd34d", color: "#92400e", borderRadius: 10, padding: "14px 18px", fontSize: 13, lineHeight: 1.7 },
+  chatWrap: { flex: 1, display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" },
   messages: { flex: 1, overflowY: "auto", padding: 32, display: "flex", flexDirection: "column", gap: 20 },
   bubble: { maxWidth: 700, padding: "14px 18px", borderRadius: 14, lineHeight: 1.6, fontSize: "15px" },
   bubbleBot: { background: "#fff", border: "1px solid #e2e8f0", alignSelf: "flex-start", boxShadow: "0 1px 3px rgba(0,0,0,0.08)" },
