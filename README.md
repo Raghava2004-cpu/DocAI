@@ -1,7 +1,8 @@
 # DocAI — PDF & Excel AI Assistant
 
 Upload PDFs or Excel files and chat with them, get summaries, and generate quizzes — powered by Groq API + RAG.
-
+- Here is the link https://medium.com/@raghavaashok2004/i-built-a-pdf-excel-ai-assistant-upload-any-document-ask-questions-get-summaries-and-generate-68113e021e20
+- I explained every detail in the Medium
 ## Features
 - PDF Q&A using RAG (FAISS + sentence-transformers)
 - Excel/CSV summarization with pandas
